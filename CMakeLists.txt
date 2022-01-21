@@ -9,6 +9,7 @@ find_package(Vulkan REQUIRED FATAL_ERROR)
 find_package(glm REQUIRED FATAL_ERROR)
 find_package(stb REQUIRED FATAL_ERROR)
 find_package(GLFW3 REQUIRED FATAL_ERROR)
+find_package(assimp REQUIRED FATAL_ERROR)
 
 ## ShaderC
 find_path(shaderc_INCLUDE_DIR

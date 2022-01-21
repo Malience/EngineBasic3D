@@ -5,7 +5,9 @@
 		]
 	},
 	
-	"Scenes": [],
+	"Scenes": [
+		"CubeTest.json"
+	],
 	
 	"Pipelines": [
 	{
@@ -46,8 +48,24 @@
 			"Type": "vert",
 			"Uniforms": [
 				{
-					"Name": "DrawDataBuffer",
+					"Name": "SceneDataBuffer",
 					"Set": 0,
+					"Binding": 0,
+					"Datatype": "buffer",
+					"Fields": [
+						{
+							"Name": "cameraPosition",
+							"Datatype": "vec4"
+						},
+						{
+							"Name": "activeLights",
+							"Datatype": "uint"
+						}
+					]
+				},
+				{
+					"Name": "DrawDataBuffer",
+					"Set": 1,
 					"Binding": 0,
 					"Datatype": "buffer",
 					"Fields": [
@@ -87,7 +105,7 @@
 				},
 				{
 					"Name": "TransformBuffer",
-					"Set": 1,
+					"Set": 2,
 					"Binding": 0,
 					"Datatype": "buffer",
 					"Fields": [
@@ -99,7 +117,7 @@
 				},
 				{
 					"Name": "PositionBuffer",
-					"Set": 2,
+					"Set": 3,
 					"Binding": 0,
 					"Datatype": "buffer",
 					"Fields": [
@@ -111,7 +129,7 @@
 				},
 				{
 					"Name": "NormalBuffer",
-					"Set": 3,
+					"Set": 4,
 					"Binding": 0,
 					"Datatype": "buffer",
 					"Fields": [
@@ -123,24 +141,12 @@
 				},
 				{
 					"Name": "TexCoord0Buffer",
-					"Set": 4,
-					"Binding": 0,
-					"Datatype": "buffer",
-					"Fields": [
-						{
-							"Name": "texCoords0",
-							"Datatype": "vec2"
-						}
-					]
-				},
-				{
-					"Name": "TexCoord1Buffer",
 					"Set": 5,
 					"Binding": 0,
 					"Datatype": "buffer",
 					"Fields": [
 						{
-							"Name": "texCoords1",
+							"Name": "texCoords0",
 							"Datatype": "vec2"
 						}
 					]
@@ -152,8 +158,48 @@
 			"Type": "frag",
 			"Uniforms": [
 				{
-					"Name": "textures",
+					"Name": "SceneDataBuffer",
+					"Set": 0,
+					"Binding": 0,
+					"Datatype": "buffer",
+					"Fields": [
+						{
+							"Name": "cameraPosition",
+							"Datatype": "vec4"
+						},
+						{
+							"Name": "activeLights",
+							"Datatype": "uint"
+						}
+					]
+				},
+				{
+					"Name": "MaterialBuffer",
 					"Set": 6,
+					"Binding": 0,
+					"Datatype": "buffer",
+					"Fields": [
+						{
+							"Name": "normals",
+							"Datatype": "vec3"
+						}
+					]
+				},
+				{
+					"Name": "LightBuffer",
+					"Set": 7,
+					"Binding": 0,
+					"Datatype": "buffer",
+					"Fields": [
+						{
+							"Name": "texCoords0",
+							"Datatype": "vec2"
+						}
+					]
+				},
+				{
+					"Name": "textures",
+					"Set": 8,
 					"Binding": 0,
 					"Datatype": "sampler2D"
 				}

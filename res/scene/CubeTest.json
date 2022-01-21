@@ -1,0 +1,53 @@
+{
+	"Objects": [
+		{
+			"Name": "Cube01",
+			"Position": [ 0, 0, 10 ],
+			"Rotation": [ 0, 0, 0 ],
+			"Scale": [ 1, 1, 1 ],
+			"Model": "CubeModel"
+		},
+		{
+			"Name": "Cube02",
+			"Position": [ 0, 0, 0 ],
+			"Rotation": [ 0, 0, 0 ],
+			"Scale": [ 1, 1, 1 ],
+			"Model": "CubeModel"
+		}
+	],
+	
+	"Models": [
+		{
+			"Name": "CubeModel",
+			"Mesh": "CubeMesh",
+			"Material": "CubeMaterial"
+		}
+	],
+	
+	"Materials": [
+		{
+			"Name": "CubeMaterial",
+			
+			"Tint": [ 0, 0, 0, 0 ],
+			"Metallic": 0,
+			"Roughness": 0,
+			"AO": 1.0,
+			
+			"AlbedoTexture": "CubeTexture",
+			"NormalTexture": ""
+		}
+	],
+	
+	"Load": [
+		{
+			"Name": "CubeMesh",
+			"Type": "mesh",
+			"Filename": "models/cube.obj"
+		},
+		{
+			"Name": "CubeTexture",
+			"Type": "img",
+			"Filename": "textures/wall.jpg"
+		}
+	]
+}

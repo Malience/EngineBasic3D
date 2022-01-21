@@ -1,13 +1,15 @@
-#include "edl/image_table.h"
-#include "edl/descriptor_manager.h"
-#include "edl/UniformBufferObject.h"
-#include "edl/StagingBuffer.h"
-#include "edl/Util.h"
-#include "edl/Model.h"
-#include "edl/ResourceSystem.h"
-#include "edl/pipeline.h"
-#include "edl/camera.h"
-#include "edl/ShaderLoader.h"
+#include "image_table.h"
+#include "descriptor_manager.h"
+#include "UniformBufferObject.h"
+#include "StagingBuffer.h"
+#include "Util.h"
+#include "Model.h"
+#include "ResourceSystem.h"
+#include "pipeline.h"
+#include "camera.h"
+#include "ShaderLoader.h"
+#include "IMGLoader.h"
+#include "MeshLoader.h"
 
 #include "edl/glfw_lib.h"
 #include "edl/vk/vulkan.h"
@@ -56,13 +58,11 @@ VkFramebuffer* framebuffers;
 VkImageView* imageviews;
 
 VkSemaphore imageReady, renderingComplete;
-glm::mat4 proj;
 
 edl::ResourceSystem resourceSystem;
 
 edl::global_info globalInfo;
 
-edl::Camera camera;
 
 const std::string SCENE_FILE = "scene.json";
 
@@ -126,9 +126,20 @@ void init(std::string applicationName) {
 	globalInfo.height = WINDOW_HEIGHT;
 
 	resourceSystem.registerLoadFunction("shader", edl::loadShader);
+	resourceSystem.registerLoadFunction("mesh", edl::loadMesh);
+	resourceSystem.registerLoadFunction("img", edl::loadIMG);
 
 	resourceSystem.init(instance, &globalInfo);
 	resourceSystem.queue = instance.queues[0];
+
+	// MVP setup
+	resourceSystem.proj = glm::perspective(glm::radians(45.0f), static_cast<float>(WINDOW_WIDTH) / static_cast<float>(WINDOW_HEIGHT), 0.1f, 10000.0f);
+	resourceSystem.proj[1][1] *= -1;
+
+	resourceSystem.camera.init(edl::GLFW::getWindow());
+	//camera.setPos(-306.675659f, -4.20801783f, 153.468704f);
+	resourceSystem.camera.setPos(30.0f, 10.0f, 0.0f);
+	resourceSystem.camera.setRot(glm::radians(90.0f), 0.0f);
 
 	globalInfo.depth_handle = resourceSystem.imageTable.createDepth(WINDOW_WIDTH, WINDOW_HEIGHT);
 
@@ -167,16 +178,9 @@ void init(std::string applicationName) {
 
 	resourceSystem.loadScene(SCENE_FILE);
 
-	// MVP setup
-	proj = glm::perspective(glm::radians(45.0f), static_cast<float>(WINDOW_WIDTH) / static_cast<float>(WINDOW_HEIGHT), 0.1f, 10000.0f);
-	proj[1][1] *= -1;
+	//resourceSystem.update(0);
 
-	camera.init(edl::GLFW::getWindow());
-	//camera.setPos(-306.675659f, -4.20801783f, 153.468704f);
-	camera.setPos(30.0f, 10.0f, 0.0f);
-	camera.setRot(glm::radians(90.0f), 0.0f);
-
-	resourceSystem.updateModels(proj, camera.view);
+	//resourceSystem.updateModels(0);
 	resourceSystem.stagingBuffer.submit(instance.queues[0]);
 	vkQueueWaitIdle(instance.queues[0]);
 
@@ -227,12 +231,12 @@ void init(std::string applicationName) {
 
 		while (lag >= MS_PER_UPDATE)
 		{
-			camera.update(MS_PER_UPDATE);
+			resourceSystem.camera.update(MS_PER_UPDATE);
 			resourceSystem.update(MS_PER_UPDATE);
 			lag -= MS_PER_UPDATE;
 		}
 		
-		resourceSystem.updateModels(proj, camera.view);
+		//resourceSystem.updateModels(delta);
 		resourceSystem.stagingBuffer.submit(instance.queues[0]);
 		vkQueueWaitIdle(instance.queues[0]);
 		 
