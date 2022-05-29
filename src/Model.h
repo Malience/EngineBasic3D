@@ -6,6 +6,10 @@
 
 namespace edl {
 
+struct MaterialSet {
+    uint64_t materials[16];
+};
+
 struct Material {
     glm::vec4 tint;
 
@@ -47,12 +51,12 @@ struct Batch {
 };
 
 struct Mesh {
-    int32_t positionOffset;
-    int32_t normalOffset;
-    int32_t tangentOffset;
-    int32_t texCoord0Offset;
+    int64_t positionOffset;
+    int64_t normalOffset;
+    int64_t tangentOffset;
+    int64_t texCoord0Offset;
     //int32_t texCoord1Offset;
-    int32_t indexOffset;
+    int64_t indexOffset;
     uint32_t indexCount;
 };
 

@@ -21,11 +21,15 @@ struct StorageBuffer {
     uint32_t elementMax;
     VkDeviceSize memorySize;
 
+    VkDeviceAddress address;
+
     uint32_t currentCount;
 };
 
+StorageBuffer createStorageBuffer(vk::Instance& instance, size_t size, VkBufferUsageFlags usage = 0);
 StorageBuffer createStorageBuffer(vk::Instance& instance, uint32_t elementSize, uint32_t elementMax, VkBufferUsageFlags usage = 0);
-uint32_t getStorageBufferIndex(StorageBuffer& storageBuffer, uint32_t count = 1);
+uint32_t getStorageBufferIndex(StorageBuffer& storageBuffer, uint32_t count = 1, uint32_t align = 0);
+uint64_t getStorageBufferAddress(StorageBuffer& storageBuffer, uint32_t index = 0);
 void updateStorageBuffer(StagingBuffer& stagingBuffer, const StorageBuffer& dst, uint32_t index, const void* src, uint32_t count);
 void bindStorageBuffer(VkCommandBuffer cb, StorageBuffer& storageBuffer, VkPipelineLayout pipelineLayout, uint32_t set);
 

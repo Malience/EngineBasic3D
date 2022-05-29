@@ -1,13 +1,9 @@
 #pragma once
 
-#include "ShaderReflection.h"
-#include "GlobalInfo.h"
 #include "ResourceSystem.h"
 #include "edl/vk/vulkan.h"
 
 #include "vulkan/vulkan.h"
-#include "rapidjson/rapidjson.h"
-#include "rapidjson/document.h"
 
 #include <unordered_map>
 #include <string>
@@ -24,33 +20,35 @@ static const std::unordered_map<glsl_datatype, VkDescriptorType> DESCRIPTOR_TYPE
 
 class Pipeline {
 public:
-    Pipeline() : renderpass(NULL), pipeline(NULL) {}
-    void init(rapidjson::GenericObject<false, rapidjson::Value>& pipeline_obj, const std::vector<std::string>& shaders, std::unordered_map<std::string, ShaderHandle>& shader_handles, std::unordered_map<std::string, ShaderReflection>& reflections, global_info* info);
-    void bind(VkCommandBuffer& cb, uint32_t imageIndex);
+    Pipeline();
 
-    std::unordered_map<uint32_t, std::vector<VkDescriptorSetLayoutBinding>> bindings;
-    VkRenderPass renderpass;
+    enum class BindPoint : uint32_t {
+        GRAPHICS = 0,
+        COMPUTE = 1,
+        RAY_TRACING = 2,
 
-    std::vector<VkRenderingInfoKHR> renderingInfos;
-    std::vector<VkRenderingAttachmentInfoKHR> attachments;
-    std::vector<VkRenderingAttachmentInfoKHR> attachmentsBuffer;
-    std::vector<VkFormat> formats;
+        BIND_POINT_MAX = 3
+    };
+    void addShader(const std::string& shader);
+    void setBindPoint(BindPoint bp);
+    void setColorFormat(VkFormat format);
+    void setDepthFormat(VkFormat format);
 
-    VkPipeline pipeline;
-    VkPipelineLayout pipelineLayout;
+    void bind(VkCommandBuffer& cb);
 
-    std::vector<VkImageView> imageviews;
-    std::vector<VkFramebuffer> framebuffers;
-    std::vector<VkRenderPassBeginInfo> renderpassInfos;
-
-    std::vector<VkClearValue> clearValues;
-
-    PFN_vkCmdBeginRenderingKHR VkCmdBeginRenderingKHR;
-
-    ShaderReflection reflection;
+    bool rebuild(Toolchain& toolchain);
 
 private:
+    BindPoint bindpoint;
+    std::vector<std::string> shaders;
+
     std::vector<VkDescriptorSetLayout> descriptorSetLayouts;
+
+    //std::vector<VkFormat> formats;
+    VkFormat colorFormat;
+    VkFormat depthStencilFormat;
+
+    VkPipeline pipeline;
 
 };
 

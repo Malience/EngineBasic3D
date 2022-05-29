@@ -7,19 +7,18 @@
 #include "ResourceSystem.h"
 #include "pipeline.h"
 #include "camera.h"
+#include "SceneLoader.h"
 #include "ShaderLoader.h"
 #include "IMGLoader.h"
-#include "MeshLoader.h"
+#include "JSONLoader.h"
+#include "OBJLoader.h"
 
 #include "edl/glfw_lib.h"
 #include "edl/vk/vulkan.h"
 #include <edl/shader.h>
-#include <edl/shader_object.h>
 #include "edl/io.h"
 #include "edl/debug.h"
 
-#include <stb/stb.h>
-#include <stb/stb_image.h>
 #include <vulkan/vulkan.h>
 #include <GLFW/glfw3.h>
 
@@ -31,9 +30,6 @@
 #include <glm/ext/matrix_transform.hpp> // glm::translate, glm::rotate, glm::scale
 #include <glm/ext/matrix_clip_space.hpp> // glm::perspective
 #include <glm/ext/scalar_constants.hpp> // glm::pi
-
-#define TINYOBJLOADER_IMPLEMENTATION
-#include "tiny_obj_loader.h"
 
 #include <iostream>
 #include <stdio.h>
@@ -51,7 +47,7 @@ VkCommandBuffer commandBuffer;
 edl::vk::Surface surface;
 edl::vk::Swapchain swapchain;
 
-VkCommandPool presentPool;
+VkCommandPool presentPool[2];
 VkCommandBuffer presentBuffers[2];
 
 VkFramebuffer* framebuffers;
@@ -61,10 +57,8 @@ VkSemaphore imageReady, renderingComplete;
 
 edl::ResourceSystem resourceSystem;
 
-edl::global_info globalInfo;
 
-
-const std::string SCENE_FILE = "scene.json";
+const std::string SCENE_FILE = "./res/scene/scene.json";
 
 void init(std::string applicationName);
 
@@ -76,14 +70,41 @@ int main() {
 
 void remakeCommandBuffer(VkCommandBuffer cb, uint32_t imageIndex);
 
+glm::mat4 persp(float fovy, float aspect, float near, float far) {
+	float tanhalf = tan(fovy / 2.0f);
+
+	glm::mat4 scale = glm::identity<glm::mat4>();
+	scale[0][0] = 1.0f / (aspect * tanhalf);
+	scale[1][1] = 1.0f / -tanhalf;
+
+	// The Standard depth mapping calculation
+	//float c1 = 2 * far * near / (near - far);
+	//float c2 = (far + near) / (far - near);
+
+	// I don't think I fully understand why this works, I just kinda took the limit as they approached infinite (n=1.0f, f=2.0f as f->inf) and these were my answers 
+	// Nearless depth buffer
+	float c1 = -2.0f;
+	float c2 = 1.0f;
+
+	glm::mat4 depthMap = glm::identity<glm::mat4>();
+	depthMap[2][2] = -c2;
+	depthMap[3][2] = c1;
+	depthMap[3][3] = 0;
+	depthMap[2][3] = -1;
+
+	glm::mat4 m = scale * depthMap;
+
+	return m;
+}
+
 void init(std::string applicationName) {
 #ifdef _DEBUG
 	edl::log::setLevel(edl::log::Level::trace);
 #else
-	edl::log::setLevel(edl::log::Level::off);
+	edl::log::setLevel(edl::log::Level::trace);
 #endif
 
-	edl::GLFW::createWindow(WINDOW_WIDTH, WINDOW_HEIGHT, "Hello World");
+	edl::GLFW::createWindow(WINDOW_WIDTH, WINDOW_HEIGHT, applicationName);
 
 	//TODO: Deal with GLFW
 	uint32_t glfwExtensionCount = 0;
@@ -102,7 +123,7 @@ void init(std::string applicationName) {
 
 	//Initialize Vulkan
 	instance.create(applicationName, engineName, layers, extensions);
-
+	
 	VkPhysicalDeviceDynamicRenderingFeaturesKHR f = {};
 	f.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_FEATURES_KHR;
 	VkPhysicalDeviceFeatures2 f2 = {};
@@ -118,47 +139,52 @@ void init(std::string applicationName) {
 	surface.create(instance.instance, instance.physicalDevice, WINDOW_WIDTH, WINDOW_HEIGHT, edl::GLFW::getWindowHandle());
 	swapchain.create(instance.physicalDevice, instance.device, surface);
 
-	globalInfo.vulkan_instance = instance.instance;
-	globalInfo.vulkan_device = instance.device;
-	globalInfo.swapchain_format = swapchain.format;
-
-	globalInfo.width = WINDOW_WIDTH;
-	globalInfo.height = WINDOW_HEIGHT;
+	resourceSystem.toolchain.add("VulkanInstance", &instance);
+	resourceSystem.toolchain.add("VulkanSwapchain", &swapchain);
+	edl::initJSONLoader(resourceSystem.toolchain);
 
 	resourceSystem.registerLoadFunction("shader", edl::loadShader);
-	resourceSystem.registerLoadFunction("mesh", edl::loadMesh);
+	//resourceSystem.registerLoadFunction("mesh", edl::loadMesh);
+	resourceSystem.registerLoadFunction("obj", edl::loadOBJ);
 	resourceSystem.registerLoadFunction("img", edl::loadIMG);
+	resourceSystem.registerLoadFunction("json", edl::loadJSON);
 
-	resourceSystem.init(instance, &globalInfo);
+	edl::initSceneLoader(resourceSystem.toolchain);
+
+	resourceSystem.init();
 	resourceSystem.queue = instance.queues[0];
 
 	// MVP setup
-	resourceSystem.proj = glm::perspective(glm::radians(45.0f), static_cast<float>(WINDOW_WIDTH) / static_cast<float>(WINDOW_HEIGHT), 0.1f, 10000.0f);
-	resourceSystem.proj[1][1] *= -1;
+	resourceSystem.proj = persp(glm::radians(45.0f), static_cast<float>(WINDOW_WIDTH) / static_cast<float>(WINDOW_HEIGHT), 1.0f, 2.0f);
+	//resourceSystem.proj[1][1] *= -1;
 
 	resourceSystem.camera.init(edl::GLFW::getWindow());
 	//camera.setPos(-306.675659f, -4.20801783f, 153.468704f);
-	resourceSystem.camera.setPos(30.0f, 10.0f, 0.0f);
-	resourceSystem.camera.setRot(glm::radians(90.0f), 0.0f);
+	resourceSystem.camera.setPos(0.0f, 5.0f, -10.0f);
+	resourceSystem.camera.setRot(glm::radians(0.0f), glm::radians(30.0f));
 
-	globalInfo.depth_handle = resourceSystem.imageTable.createDepth(WINDOW_WIDTH, WINDOW_HEIGHT);
+	resourceSystem.depthHandle[0] = resourceSystem.imageTable.createDepth(WINDOW_WIDTH, WINDOW_HEIGHT);
+	resourceSystem.depthHandle[1] = resourceSystem.imageTable.createDepth(WINDOW_WIDTH, WINDOW_HEIGHT);
+	resourceSystem.width = WINDOW_WIDTH;
+	resourceSystem.height = WINDOW_HEIGHT;
 
+	resourceSystem.buildRenderInfo();
 	//TEMP
-	globalInfo.swapchain_images.resize(swapchain.imageCount);
+	/*globalInfo.swapchain_images.resize(swapchain.imageCount);
 	for (int i = 0; i < swapchain.imageCount; ++i) {
 		globalInfo.swapchain_images[i] = swapchain.images[i];
-	}
+	}*/
 
-	globalInfo.num_back_buffers = globalInfo.swapchain_images.size();
-
+	//globalInfo.num_back_buffers = globalInfo.swapchain_images.size();
+	
 	VkCommandBufferBeginInfo beginInfo = {};
 	beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
 
 	vkBeginCommandBuffer(commandBuffer, &beginInfo);
-	for (int i = 0; i < globalInfo.swapchain_images.size(); ++i) {
-		edl::vk::transitionImage(commandBuffer, globalInfo.swapchain_images[i], VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+	for (int i = 0; i < resourceSystem.swapchain.imageCount; ++i) {
+		edl::vk::transitionImage(commandBuffer, resourceSystem.swapchain.images[i], VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+		edl::vk::transitionImage(commandBuffer, resourceSystem.depthHandle[i].image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
 	}
-	edl::vk::transitionImage(commandBuffer, globalInfo.depth_handle.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
 	vkEndCommandBuffer(commandBuffer);
 
 	VkSubmitInfo submitInfo = {};
@@ -175,9 +201,10 @@ void init(std::string applicationName) {
 	vkQueueSubmit(instance.queues[0], 1, &submitInfo, nullptr);
 	vkQueueWaitIdle(instance.queues[0]);
 	//commandBuffer.destroy();
-
-	resourceSystem.loadScene(SCENE_FILE);
-
+	
+	edl::Resource& res = resourceSystem.createResource("SceneFile", SCENE_FILE, "json", "Scene");
+	resourceSystem.requestResourceLoad(res.id);
+	
 	//resourceSystem.update(0);
 
 	//resourceSystem.updateModels(0);
@@ -187,19 +214,22 @@ void init(std::string applicationName) {
 	VkCommandPoolCreateInfo createInfo = {};
 	createInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
 	createInfo.pNext = nullptr;
-	createInfo.flags = 0;// VkCommandPoolCreateFlagBits::VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+	createInfo.flags = VkCommandPoolCreateFlagBits::VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
 	createInfo.queueFamilyIndex = 0;
 
-	vkCreateCommandPool(instance.device, &createInfo, nullptr, &presentPool);
+	vkCreateCommandPool(instance.device, &createInfo, nullptr, &presentPool[0]);
+	vkCreateCommandPool(instance.device, &createInfo, nullptr, &presentPool[1]);
 
 	VkCommandBufferAllocateInfo allocateInfo = {};
 	allocateInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
 	allocateInfo.pNext = nullptr;
 	allocateInfo.level = VkCommandBufferLevel::VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-	allocateInfo.commandPool = presentPool;
-	allocateInfo.commandBufferCount = 2;
+	allocateInfo.commandPool = presentPool[0];
+	allocateInfo.commandBufferCount = 1;
 
-	vkAllocateCommandBuffers(instance.device, &allocateInfo, presentBuffers);
+	vkAllocateCommandBuffers(instance.device, &allocateInfo, &presentBuffers[0]);
+	allocateInfo.commandPool = presentPool[1];
+	vkAllocateCommandBuffers(instance.device, &allocateInfo, &presentBuffers[1]);
 
 	VkSemaphoreCreateInfo seminfo = {};
 	seminfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
@@ -210,9 +240,21 @@ void init(std::string applicationName) {
 	vkCreateSemaphore(instance.device, &seminfo, nullptr, &renderingComplete);
 
 	resourceSystem.update(1);
+	resourceSystem.rebuildPipelines();
 
-	remakeCommandBuffer(presentBuffers[0], 0);
-	remakeCommandBuffer(presentBuffers[1], 1);
+	VkFenceCreateInfo fenceInfo = {};
+	fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+	fenceInfo.pNext = nullptr;
+	fenceInfo.flags = 0;
+
+	VkFence fence[2];
+	vkCreateFence(instance.device, &fenceInfo, nullptr, &fence[0]);
+	vkCreateFence(instance.device, &fenceInfo, nullptr, &fence[1]);
+
+	//netengine.setup(resourceSystem.toolchain);
+
+	//remakeCommandBuffer(presentBuffers[0], 0);
+	//remakeCommandBuffer(presentBuffers[1], 1);
 
 	double last = glfwGetTime();
 	double check = last;
@@ -235,16 +277,21 @@ void init(std::string applicationName) {
 			resourceSystem.update(MS_PER_UPDATE);
 			lag -= MS_PER_UPDATE;
 		}
-		
-		//resourceSystem.updateModels(delta);
-		resourceSystem.stagingBuffer.submit(instance.queues[0]);
-		vkQueueWaitIdle(instance.queues[0]);
-		 
+
 		uint32_t imageIndex = 0;
 		//Disable double buffering
 		vkAcquireNextImageKHR(instance.device, swapchain.swapchain, UINT64_MAX, imageReady, VK_NULL_HANDLE, &imageIndex);
 		//printf("Image Index: %d\n", imageIndex);
 		
+		vkWaitForFences(instance.device, 1, &fence[imageIndex], VK_TRUE, 10000000);
+		vkDeviceWaitIdle(instance.device);
+		vkResetFences(instance.device, 1, &fence[imageIndex]);
+		remakeCommandBuffer(presentBuffers[imageIndex], imageIndex);
+
+		//resourceSystem.updateModels(delta);
+		resourceSystem.stagingBuffer.submit(instance.queues[0]);
+		vkQueueWaitIdle(instance.queues[0]);
+
 
 		VkPipelineStageFlags flags[] = { VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT };
 		VkSubmitInfo submitInfo = {};
@@ -253,16 +300,19 @@ void init(std::string applicationName) {
 		submitInfo.waitSemaphoreCount = 1;
 		submitInfo.pWaitSemaphores = &imageReady;
 		submitInfo.pWaitDstStageMask = flags;
-		submitInfo.signalSemaphoreCount = 1;
+		submitInfo.signalSemaphoreCount = 0; // TODO: Fix this
 		submitInfo.pSignalSemaphores = &renderingComplete;
 		submitInfo.commandBufferCount = 1;
 		submitInfo.pCommandBuffers = &presentBuffers[imageIndex];
 
-		vkQueueSubmit(instance.queues[0], 1, &submitInfo, nullptr);
+		vkQueueSubmit(instance.queues[0], 1, &submitInfo, fence[imageIndex]);
+		vkQueueWaitIdle(instance.queues[0]);
+		
+
 		VkPresentInfoKHR presentInfo = {};
 		presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
 		presentInfo.pNext = NULL;
-		presentInfo.waitSemaphoreCount = 1;
+		presentInfo.waitSemaphoreCount = 0; //TODO : Fix this
 		presentInfo.pWaitSemaphores = &renderingComplete;
 		presentInfo.swapchainCount = 1;
 		presentInfo.pSwapchains = &swapchain.swapchain;
@@ -282,14 +332,18 @@ void init(std::string applicationName) {
 			frames = 0;
 		}
 	}
+	
 }
 
 void remakeCommandBuffer(VkCommandBuffer cb, uint32_t imageIndex) {
+
+	//vkResetCommandPool(instance.device, presentPool[imageIndex], 0);
+
 	VkCommandBufferBeginInfo beginInfo = {};
 	beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
 	beginInfo.pNext = 0;
 	beginInfo.pInheritanceInfo = 0;
-	beginInfo.flags = 0;// VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+	beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
 
 	VkPipelineStageFlagBits srcMask, dstMask;
 	VkImageMemoryBarrier memoryBarrier = {};
@@ -301,7 +355,7 @@ void remakeCommandBuffer(VkCommandBuffer cb, uint32_t imageIndex) {
 
 	vkBeginCommandBuffer(cb, &beginInfo);
 
-	memoryBarrier.image = globalInfo.swapchain_images[imageIndex];
+	memoryBarrier.image = resourceSystem.swapchain.images[imageIndex];
 	memoryBarrier.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
 	memoryBarrier.srcAccessMask = 0;
 	memoryBarrier.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
@@ -311,7 +365,7 @@ void remakeCommandBuffer(VkCommandBuffer cb, uint32_t imageIndex) {
 	dstMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
 	vkCmdPipelineBarrier(cb, srcMask, dstMask, 0, 0, NULL, 0, NULL, 1, &memoryBarrier);
 
-	memoryBarrier.image = globalInfo.depth_handle.image;
+	memoryBarrier.image = resourceSystem.depthHandle[imageIndex].image;
 	memoryBarrier.subresourceRange = { VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT, 0, 1, 0, 1 };
 	memoryBarrier.srcAccessMask = 0;
 	memoryBarrier.dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
@@ -323,7 +377,7 @@ void remakeCommandBuffer(VkCommandBuffer cb, uint32_t imageIndex) {
 
 	resourceSystem.draw(cb, imageIndex);
 
-	memoryBarrier.image = globalInfo.swapchain_images[imageIndex];
+	memoryBarrier.image = resourceSystem.swapchain.images[imageIndex];
 	memoryBarrier.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
 	memoryBarrier.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
 	memoryBarrier.dstAccessMask = 0;

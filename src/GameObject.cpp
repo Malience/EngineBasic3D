@@ -1,6 +1,7 @@
 #include "GameObject.h"
 
 #include "ResourceSystem.h"
+#include "edl/resource.h"
 
 namespace edl {
 
@@ -14,12 +15,12 @@ GameObject::GameObject() {
 
     parent = nullptr;
     children.reserve(1);
-    component = nullptr;
+    //component = nullptr;
 }
 
-void GameObject::update(res::Toolchain& toolchain, float delta) {
-    if (component != nullptr) {
-        component->update(toolchain, delta);
+void GameObject::update(Toolchain& toolchain, float delta) {
+    for (auto& ptr : components) {
+        ptr.second->update(toolchain, delta);
     }
 
     for (GameObject* child : children) {
@@ -35,6 +36,11 @@ void GameObject::calculateTransform() {
     s = glm::scale(glm::mat4(1), scale);
 
     transform = trans * rot * s;
+}
+
+void GameObject::addComponent(const std::string& name, GameComponent& component) {
+    components.insert({ name, &component });
+    component.parent = this;
 }
 
 }

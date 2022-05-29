@@ -1,0 +1,178 @@
+#version 460
+#extension GL_ARB_separate_shader_objects : enable
+#extension GL_ARB_shader_draw_parameters : enable
+#extension GL_ARB_gpu_shader_int64 : enable
+#extension GL_EXT_buffer_reference : enable
+#extension GL_EXT_buffer_reference2 : enable
+#extension GL_NV_mesh_shader : require
+#extension GL_EXT_debug_printf : enable
+ 
+const uint SIZEOF_UINT16 = 2;
+const uint SIZEOF_VEC2 = 8;
+const uint SIZEOF_VEC4 = 16;
+
+const uint SIZEOF_MAX_VERTICES = 64;
+const uint SIZEOF_MAX_TRIANGLES = 126;
+ 
+layout(local_size_x = 32) in;
+layout(triangles, max_vertices = SIZEOF_MAX_VERTICES, max_primitives = SIZEOF_MAX_TRIANGLES) out;
+
+layout (location = 0) perprimitiveNV out TriangleData {
+    uint64_t material;
+} triangles[];
+
+layout (location = 2) out VertexData {
+    vec4 position;
+    vec3 normal;
+    vec3 tangent;
+    vec3 bitangent;
+    vec2 texCoord;
+    mat3 TBN;
+} vertices[];
+
+layout(buffer_reference, std430, buffer_reference_align = 16) buffer Vec4Ptr { 
+    vec4 v;
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 8) buffer Vec2Ptr { 
+    vec2 v;
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 16) buffer Mat4Ptr { 
+    mat4 m;
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer UintPtr { 
+    uint v;
+};
+
+struct MaterialSet {
+    uint64_t materials[16];
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 16) buffer MaterialSetPtr { 
+    MaterialSet m;
+};
+
+struct Meshlet {
+    uint vertCount;
+    uint triCount;
+
+    Vec4Ptr positions;
+    Vec4Ptr normals;
+    Vec4Ptr tangents;
+    Vec2Ptr texcoords;
+
+    UintPtr indices;
+    UintPtr materials;
+    
+    uint64_t padding0;
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 16) buffer MeshletPtr { 
+    Meshlet m;
+};
+
+struct Mesh {
+    uint meshletCount;
+    uint padding0;
+    MeshletPtr meshlets;
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 16) buffer MeshPtr { 
+    Mesh m;
+};
+
+struct SceneData {
+	vec4 cameraPosition;
+	
+	vec4 lightDir;
+	vec4 lightColor;
+	
+	float directionalLightPower;
+	uint activeLights;
+	int pad0;
+	int pad1;
+};
+
+struct DrawCommand {
+    MeshPtr mesh;
+    uint64_t meshlet;
+	MaterialSetPtr materials;
+	Mat4Ptr mvp;
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 16) buffer ScenePtr { 
+    SceneData scene;
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 16) buffer DrawPtr { 
+    DrawCommand data;
+};
+
+layout(push_constant) uniform fragmentPushConstants {
+    layout(offset = 0) ScenePtr scenePtr;
+    layout(offset = 8) DrawPtr commandsPtr;
+};
+
+void main() {
+    uint id = gl_LocalInvocationID.x;
+    uint command_id = gl_WorkGroupID.x;
+    
+    SceneData scene = scenePtr.scene;
+    DrawCommand command = (commandsPtr + command_id).data;
+	//DrawData drawData = (drawDatas + gl_DrawIDARB).data;
+
+    Mesh mesh = command.mesh.m;
+    Meshlet meshlet = (mesh.meshlets + command.meshlet).m;
+    MaterialSet materialSet = command.materials.m;
+    mat4 mvp = command.mvp.m;
+    
+    Vec4Ptr positions = meshlet.positions;
+    Vec4Ptr normals = meshlet.normals;
+    Vec4Ptr tangents = meshlet.tangents;
+    Vec2Ptr texcoords = meshlet.texcoords;
+    
+    
+    //TODO: make normals and tangents vec4s because REally?
+    // Handle Vertex Data
+    for(uint i = id; i < meshlet.vertCount; i+=32) { // TODO: Optimize
+        vec4 position = mvp * (positions + i).v;
+        vec3 normal = normalize((mvp * (normals + i).v).xyz);
+        
+        vertices[i].tangent = (tangents + i).v.xyz;
+        vertices[i].texCoord = (texcoords + i).v;
+        
+        vertices[i].position = position;
+        vertices[i].normal = normal;
+        vertices[i].tangent = normalize((mvp * vec4(vertices[i].tangent, 0.0)).xyz);
+        vertices[i].tangent = normalize(vertices[i].tangent - dot(vertices[i].tangent, vertices[i].normal) * vertices[i].normal);
+        vertices[i].bitangent = cross(vertices[i].normal, vertices[i].tangent);
+        
+        vertices[i].TBN = mat3(vertices[i].tangent, vertices[i].bitangent, vertices[i].normal);
+        
+        //vertices[i].texCoord = (drawData.texCoord0Offset + gl_VertexIndex).v;
+        vertices[i].texCoord.y = 1.0 - vertices[i].texCoord.y;
+        
+        gl_MeshVerticesNV[i].gl_Position = position;
+    }
+    
+    
+    UintPtr indices = meshlet.indices;
+    UintPtr materials = meshlet.materials;
+    
+    // Handle Triangle Data
+    for(uint i = id; i < meshlet.triCount; i+=32) { // TODO: Optimize
+        gl_PrimitiveIndicesNV[i*3 + 0] = (indices + i*3 + 0).v;
+        gl_PrimitiveIndicesNV[i*3 + 1] = (indices + i*3 + 1).v;
+        gl_PrimitiveIndicesNV[i*3 + 2] = (indices + i*3 + 2).v;
+        
+        uint mat = (materials + i).v;
+        triangles[i].material = materialSet.materials[0]; // CHANGE THIS
+    }
+    
+    gl_PrimitiveCountNV = meshlet.triCount;
+    
+    
+    
+}

@@ -1,10 +1,14 @@
 #include "StagingBuffer.h"
+
 #include "UniformBufferObject.h"
 #include "Util.h"
 
 #include "edl/io.h"
+#include "edl/util.h"
 
 #include "vulkan/vulkan.h"
+
+#include <assert.h>
 
 namespace edl {
 
@@ -153,6 +157,7 @@ void StagingBuffer::copyBufferToImage(const void* src, const VkImage& dst, const
 }
 
 void StagingBuffer::copyBufferToBuffer(const void* src, const VkBuffer& dst, const VkDeviceSize& dstOffset, const VkDeviceSize& size) {
+	assert(size > 0);
 	size_t aligned_offset = align(current_offset, 0x4);
 	
 	//TODO: Persistent mapping

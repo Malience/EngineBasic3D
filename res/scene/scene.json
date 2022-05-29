@@ -5,205 +5,38 @@
 		]
 	},
 	
-	"Scenes": [
-		"CubeTest.json"
-	],
-	
-	"Pipelines": [
+    "Load": [
+        {
+            "Name": "CubeTest",
+            "Type": "json",
+            "Subtype": "Scene",
+            "Filename": "scene/CubeTest.json"
+        },
+        {
+            "Name": "Shader3DMesh",
+            "Type": "shader",
+            "Subtype": "mesh",
+            "Filename": "shaders/shader3D.mesh"
+        },
+        {
+            "Name": "Shader3DFrag",
+            "Type": "shader",
+            "Subtype": "frag",
+            "Filename": "shaders/shader3D.frag"
+        }
+    ],
+    
+    "Pipelines": [
 	{
 		"Name": "Shader3D",
-		"ColorAttachments": [
-			{
-				"Format": "Swapchain"
-			}
+		"ColorFormats": [
+            "swapchain"
 		],
-		"DepthAttachment": {
-			"Format": "Unimplemented"
-		},
+		"DepthStencilFormat": "depth",
 		"Shaders": [
-			"Shader3DVert",
+			"Shader3DMesh",
 			"Shader3DFrag"
 		]
 	}
-	],
-	
-	"Load": [
-		{
-			"Name": "Shader3DVert",
-			"Type": "shader",
-			"Subtype": "vert",
-			"Filename": "shaders/shader3d.vert"
-		},
-		{
-			"Name": "Shader3DFrag",
-			"Type": "shader",
-			"Subtype": "frag",
-			"Filename": "shaders/shader3d.frag"
-		}
-	],
-	
-	"ShaderReflection": [
-		{
-			"Name": "Shader3DVert",
-			"Type": "vert",
-			"Uniforms": [
-				{
-					"Name": "SceneDataBuffer",
-					"Set": 0,
-					"Binding": 0,
-					"Datatype": "buffer",
-					"Fields": [
-						{
-							"Name": "cameraPosition",
-							"Datatype": "vec4"
-						},
-						{
-							"Name": "activeLights",
-							"Datatype": "uint"
-						}
-					]
-				},
-				{
-					"Name": "DrawDataBuffer",
-					"Set": 1,
-					"Binding": 0,
-					"Datatype": "buffer",
-					"Fields": [
-						{
-							"Name": "positionOffset",
-							"Datatype": "uint"
-						},
-						{
-							"Name": "normalOffset",
-							"Datatype": "uint"
-						},
-						{
-							"Name": "texCoord0Offset",
-							"Datatype": "uint"
-						},
-						{
-							"Name": "texCoord1Offset",
-							"Datatype": "uint"
-						},
-						{
-							"Name": "materialOffset",
-							"Datatype": "uint"
-						},
-						{
-							"Name": "transformOffset",
-							"Datatype": "uint"
-						},
-						{
-							"Name": "padding0",
-							"Datatype": "uint"
-						},
-						{
-							"Name": "padding1",
-							"Datatype": "uint"
-						}
-					]
-				},
-				{
-					"Name": "TransformBuffer",
-					"Set": 2,
-					"Binding": 0,
-					"Datatype": "buffer",
-					"Fields": [
-						{
-							"Name": "transforms",
-							"Datatype": "mat4"
-						}
-					]
-				},
-				{
-					"Name": "PositionBuffer",
-					"Set": 3,
-					"Binding": 0,
-					"Datatype": "buffer",
-					"Fields": [
-						{
-							"Name": "positions",
-							"Datatype": "vec3"
-						}
-					]
-				},
-				{
-					"Name": "NormalBuffer",
-					"Set": 4,
-					"Binding": 0,
-					"Datatype": "buffer",
-					"Fields": [
-						{
-							"Name": "normals",
-							"Datatype": "vec3"
-						}
-					]
-				},
-				{
-					"Name": "TexCoord0Buffer",
-					"Set": 5,
-					"Binding": 0,
-					"Datatype": "buffer",
-					"Fields": [
-						{
-							"Name": "texCoords0",
-							"Datatype": "vec2"
-						}
-					]
-				}
-			]
-		},
-		{
-			"Name": "Shader3DFrag",
-			"Type": "frag",
-			"Uniforms": [
-				{
-					"Name": "SceneDataBuffer",
-					"Set": 0,
-					"Binding": 0,
-					"Datatype": "buffer",
-					"Fields": [
-						{
-							"Name": "cameraPosition",
-							"Datatype": "vec4"
-						},
-						{
-							"Name": "activeLights",
-							"Datatype": "uint"
-						}
-					]
-				},
-				{
-					"Name": "MaterialBuffer",
-					"Set": 6,
-					"Binding": 0,
-					"Datatype": "buffer",
-					"Fields": [
-						{
-							"Name": "normals",
-							"Datatype": "vec3"
-						}
-					]
-				},
-				{
-					"Name": "LightBuffer",
-					"Set": 7,
-					"Binding": 0,
-					"Datatype": "buffer",
-					"Fields": [
-						{
-							"Name": "texCoords0",
-							"Datatype": "vec2"
-						}
-					]
-				},
-				{
-					"Name": "textures",
-					"Set": 8,
-					"Binding": 0,
-					"Datatype": "sampler2D"
-				}
-			]
-		}
 	]
 }

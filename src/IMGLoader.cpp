@@ -2,19 +2,24 @@
 
 #include "ResourceSystem.h"
 
-#include "stb/stb_image.h"
+#define STB_IMAGE_IMPLEMENTATION
+#include "stb_image.h"
 
 namespace edl {
 
-void loadIMG(res::Toolchain& toolchain, res::Resource& res) {
+void loadIMG(Toolchain& toolchain, Resource& res) {
+    //std::cout << "-- Loading IMG: " << res.path << " START!" << std::endl;
     edl::ResourceSystem& system = toolchain.getTool<edl::ResourceSystem>("system");
 
-    edl::res::allocateResourceData(res, sizeof(edl::res::Image), *system.allocator);
-    edl::res::Image& image = edl::res::getResourceData<edl::res::Image>(res);
+    edl::allocateResourceData(res, sizeof(edl::res::Image), *system.allocator);
+    edl::res::Image& image = edl::getResourceData<edl::res::Image>(res);
 
     int width, height, channels;
 
-    stbi_uc* data = stbi_load(res.path, &width, &height, &channels, 4);
+    //stbi_set_flip_vertically_on_load(1);
+    //std::cout << "--- Loading File: " << res.path << " START!" << std::endl;
+    stbi_uc* data = stbi_load(res.path.c_str(), &width, &height, &channels, 4);
+    //std::cout << "--- Loading File: " << res.path << " END!" << std::endl;
 
     //std::cout << stbi_failure_reason() << std::endl;
 
@@ -29,7 +34,9 @@ void loadIMG(res::Toolchain& toolchain, res::Resource& res) {
     system.textureMap.insert({res.name, image.materialIndex});
 
     stbi_image_free(data);
-    res.status = edl::res::ResourceStatus::LOADED;
+    res.status = edl::ResourceStatus::LOADED;
+
+    //std::cout << "-- Loading IMG: " << res.path << " END!" << std::endl;
 }
 
 }

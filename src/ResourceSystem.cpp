@@ -4,13 +4,10 @@
 #include "Util.h"
 #include "ShaderLoader.h"
 #include "bindless_types.h"
+#include "edl/util.h"
 #include "edl/debug.h"
 #include "edl/io.h"
-
-#include "rapidjson/rapidjson.h"
-#include "rapidjson/document.h"
-#include "rapidjson/writer.h"
-#include "rapidjson/stringbuffer.h"
+#include "edl/resource.h"
 
 #include <filesystem>
 #include <iomanip>
@@ -20,31 +17,26 @@
 namespace edl {
 
 ResourceSystem::ResourceSystem() {
-    allocator = new mem::DefaultAllocator();
+    allocator = new DefaultAllocator();
 }
 
 ResourceSystem::~ResourceSystem() {
 
 }
 
-void ResourceSystem::init(vk::Instance& instance, global_info* globalInfo) {
-    this->instance = instance;
+void ResourceSystem::init() {
+    instance = toolchain.getTool<vk::Instance>("VulkanInstance");
     vulkan_physical_device = instance.physicalDevice;
     vulkan_device = instance.device;
-
-    this->globalInfo = globalInfo;
 
     VkPhysicalDeviceProperties props;
     vkGetPhysicalDeviceProperties(vulkan_physical_device, &props);
 
-    stagingBuffer.create(vulkan_physical_device, vulkan_device, 256 * 1028 * 1028, 0);
-    imageTable.init(vulkan_physical_device, vulkan_device, 1920 * 1080 * 4 * 20);
+    stagingBuffer.create(vulkan_physical_device, vulkan_device, (size_t) 1 * 1028 * 1028 * 1028, 0);
+    imageTable.init(vulkan_physical_device, vulkan_device, (size_t) 1920 * 1080 * 4 * 20);
     uniformBufferObject.create(vulkan_physical_device, vulkan_device, 20000, sizeof(float) * 16, props.limits.minUniformBufferOffsetAlignment);
     textureIndexObject.create(vulkan_physical_device, vulkan_device, 20000, sizeof(DrawData), props.limits.minUniformBufferOffsetAlignment);
     descriptorManager.init(vulkan_device);
-
-    //TODO: Come on vulkan >.<
-    VkBuffer wasteOfMemory = vk::createBuffer(vulkan_device, 1, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
 
     uint32_t objectMax = 30000;
     uint32_t triangleMax = 64 * 1024 * 1024;
@@ -52,361 +44,189 @@ void ResourceSystem::init(vk::Instance& instance, global_info* globalInfo) {
 
     bindlessImageDescriptor.create(instance.device, 0, materialMax);
 
-    transformBuffer = createStorageBuffer(instance, sizeof(glm::mat4), objectMax);
-    materialBuffer = createStorageBuffer(instance, sizeof(Material), 10000);
-    drawDataBuffer = createStorageBuffer(instance, sizeof(DrawData), objectMax * 5);
+    transformBuffer = createStorageBuffer(instance, sizeof(glm::mat4), objectMax * 10, 0);
+    materialBuffer = createStorageBuffer(instance, sizeof(Material), 10000, 0);
+    materialSetBuffer = createStorageBuffer(instance, sizeof(MaterialSet), 10, 0);
+    drawDataBuffer = createStorageBuffer(instance, sizeof(DrawCommand), objectMax * 10, 0);
 
-    positionBuffer = createStorageBuffer(instance, sizeof(glm::vec4), triangleMax, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
-    normalBuffer = createStorageBuffer(instance, sizeof(glm::vec4), triangleMax, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
-    texCoord0Buffer = createStorageBuffer(instance, sizeof(glm::vec2), triangleMax, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+    geometryBuffer = createStorageBuffer(instance, (size_t) 2 * 1024 * 1024 * 1024, 0);
 
-    indexBuffer = createStorageBuffer(instance, sizeof(uint16_t), triangleMax * 3, VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
-
-    indirectBuffer = createStorageBuffer(instance, sizeof(VkDrawIndexedIndirectCommand), objectMax, VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT);
+    indirectBuffer = createStorageBuffer(instance, sizeof(VkDrawMeshTasksIndirectCommandNV), objectMax, VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT);
 
     sceneDataBuffer = createStorageBuffer(instance, sizeof(SceneData), 1);
     lightBuffer = createStorageBuffer(instance, sizeof(Light), 10);
 
+    std::vector<VkDescriptorSetLayout> setLayouts;
+    setLayouts.push_back(bindlessImageDescriptor.descriptorSetLayout);
+    setLayouts.push_back(sceneDataBuffer.descriptorSetLayout);
+    setLayouts.push_back(drawDataBuffer.descriptorSetLayout);
+    setLayouts.push_back(geometryBuffer.descriptorSetLayout);
+    setLayouts.push_back(transformBuffer.descriptorSetLayout);
+    setLayouts.push_back(materialBuffer.descriptorSetLayout);
+    setLayouts.push_back(lightBuffer.descriptorSetLayout);
+
+    pipelineLayout = vk::createPipelineLayout(instance.device, setLayouts.size(), setLayouts.data());
+
     toolchain.add("system", this);
+    toolchain.add("ObjectRegistry", &objectRegistry);
+    toolchain.add("DirLight", &dirLight);
+    toolchain.add("Camera", &camera);
 
     //TODO: If something is messing up, it's probably this!
-    objects.reserve(1000);
     renderables.reserve(1000);
+
+    directories.push_back("");
 }
 
-void ResourceSystem::loadScene(const std::string& filename) {
-    std::string dir = "./res/scene/";
-    std::vector<char> data;
-    loadFile(dir + filename, data);
-
-    rapidjson::Document d;
-    d.Parse<rapidjson::kParseStopWhenDoneFlag>(data.data(), data.size());
-    if (d.HasParseError()) {
-        std::cout << "JSON parsing error, code: " << d.GetParseError() << ", offset: " << d.GetErrorOffset() << std::endl;
-    }
-    assert(d.IsObject());
-
-    if (d.HasMember("Options")) {
-        auto& options = d["Options"].GetObject();
-
-        if (options.HasMember("Directories")) {
-            for (auto* ptr = options["Directories"].GetArray().Begin(); ptr != options["Directories"].GetArray().End(); ++ptr) {
-                const char* dir = ptr->GetString();
-                directories.push_back(dir);
-            }
-        }
+void ResourceSystem::buildRenderInfo() {
+    swapchain = toolchain.getTool<vk::Swapchain>("VulkanSwapchain");
+    imageviews.resize(swapchain.imageCount);
+    for (uint32_t i = 0; i < swapchain.imageCount; i++) {
+        VkImageViewCreateInfo imageviewcreateinfo;
+        imageviewcreateinfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+        imageviewcreateinfo.flags = 0;
+        imageviewcreateinfo.pNext = nullptr;
+        imageviewcreateinfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        imageviewcreateinfo.format = swapchain.format;
+        imageviewcreateinfo.components = { VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY };
+        imageviewcreateinfo.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+        imageviewcreateinfo.image = swapchain.images[i];
+        vk::checkResult(vkCreateImageView(vulkan_device, &imageviewcreateinfo, nullptr, &imageviews[i]), "imageview creation!");
     }
 
-    if (d.HasMember("Load")) {
-        loadFiles(d["Load"].GetArray());
-    }
+    attachments.resize(4);
 
-    update(0);//TODO: Get rid of this
+    attachments[0].sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR;
+    attachments[0].pNext = nullptr;
+    attachments[0].imageView = imageviews[0];// info-> //TODO: FIX
+    attachments[0].imageLayout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL_KHR;
+    attachments[0].resolveMode = VK_RESOLVE_MODE_NONE;
+    attachments[0].resolveImageView = VK_NULL_HANDLE;
+    attachments[0].resolveImageLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    attachments[0].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    attachments[0].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    attachments[0].clearValue.color = { 0.0f, 0.0f, 0.0f, 0.0f };
 
-    if (d.HasMember("ShaderReflection")) {
-        loadReflections(d["ShaderReflection"].GetArray());
-    }
+    //formats.push_back(info->swapchain_format); // Determine Formats should be determinable from the shader reflection
 
-    if (d.HasMember("Pipelines")) {
-        for (auto* ptr = d["Pipelines"].GetArray().Begin(); ptr != d["Pipelines"].GetArray().End(); ++ptr) {
-            auto& pipeline = ptr->GetObject();
+    attachments[1].sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR;
+    attachments[1].pNext = nullptr;
+    attachments[1].imageView = imageviews[1];// info-> //TODO: FIX
+    attachments[1].imageLayout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL_KHR;
+    attachments[1].resolveMode = VK_RESOLVE_MODE_NONE;
+    attachments[1].resolveImageView = VK_NULL_HANDLE;
+    attachments[1].resolveImageLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    attachments[1].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    attachments[1].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    attachments[1].clearValue.color = { 0.0f, 0.0f, 0.0f, 0.0f };
 
-            assert(pipeline.HasMember("Name"));
-            std::string name = pipeline["Name"].GetString();
+    //formats.push_back(info->swapchain_format); // Determine Formats should be determinable from the shader reflection
 
-            if (pipelines.find(name) != pipelines.end()) return; //Already loaded
-
-            //Load shaders
-            //TODO: Better Reflection
-            //TODO: Caching and stuff
-
-            //TODO: MOVE Shaders and meshes into own sections
-
-            //Secondly, only handles (which should be uint64_t) should ever leave this object
-            // Everything should link to this and use it in combination with the handles
-            // ie. getMesh(string name) => mesh_handle
-            // drawMesh(mesh_handle handle) => drawMesh()
-            // Might need a hybrid system where you return objects that can be used externally 
-
-            // Files loaded by outside file types would have the same name as their filename
-
-            //TODO: Async implementation
-            std::vector<std::string> shaders; //TODO: This is kinda yikes
-            assert(pipeline.HasMember("Shaders"));
-            for (auto* ptr1 = pipeline["Shaders"].GetArray().Begin(); ptr1 != pipeline["Shaders"].GetArray().End(); ++ptr1) {
-                shaders.push_back(ptr1->GetString());
-            }
-
-
-            //TODO: Handle multiple
-            pipelines[name].init(pipeline, shaders, shader_handles, reflections, globalInfo);
-            for (auto& ptr = pipelines[name].bindings.begin(); ptr != pipelines[name].bindings.end(); ++ptr) {
-                layouts[ptr->first] = descriptorManager.createLayout(ptr->second);
-            }
-        }
-    }
-
-    if (d.HasMember("Objects")) {
-        auto& models = d["Objects"].GetArray();
-        for (auto* ptr = models.Begin(); ptr != models.End(); ++ptr) {
-            loadObject(ptr->GetObject());
-        }
-    }
-
-    if (d.HasMember("Models")) {
-        auto& member = d["Models"].GetArray();
-        for (auto* ptr = member.Begin(); ptr != member.End(); ++ptr) {
-            loadModel(ptr->GetObject());
-        }
-    }
-
-    if (d.HasMember("Materials")) {
-        auto& member = d["Materials"].GetArray();
-        for (auto* ptr = member.Begin(); ptr != member.End(); ++ptr) {
-            loadMaterial(ptr->GetObject());
-        }
-    }
-
-    if (d.HasMember("LoadLate")) {
-        loadFiles(d["LoadLate"].GetArray());
-    }
-
-    if (d.HasMember("Scenes")) {
-        for (auto* ptr1 = d["Scenes"].GetArray().Begin(); ptr1 != d["Scenes"].GetArray().End(); ++ptr1) {
-            loadScene(ptr1->GetString());
-        }
-    }
+    attachments[2].sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR;
+    attachments[2].pNext = nullptr;
+    attachments[2].imageView = depthHandle[0].imageview;// info-> //TODO: FIX
+    attachments[2].imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL_KHR;
+    attachments[2].resolveMode = VK_RESOLVE_MODE_NONE;
+    attachments[2].resolveImageView = VK_NULL_HANDLE;
+    attachments[2].resolveImageLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    attachments[2].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    attachments[2].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    attachments[2].clearValue.depthStencil = { 100.0f, 0 };
     
-}
 
-void ResourceSystem::loadFiles(const rapidjson::GenericArray<false, rapidjson::Value>& files) {
-    for (auto* ptr = files.Begin(); ptr != files.End(); ++ptr) {
-        auto& obj = ptr->GetObject();
+    attachments[3].sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR;
+    attachments[3].pNext = nullptr;
+    attachments[3].imageView = depthHandle[1].imageview;// info-> //TODO: FIX
+    attachments[3].imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL_KHR;
+    attachments[3].resolveMode = VK_RESOLVE_MODE_NONE;
+    attachments[3].resolveImageView = VK_NULL_HANDLE;
+    attachments[3].resolveImageLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    attachments[3].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    attachments[3].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    attachments[3].clearValue.depthStencil = { 100.0f, 0 };
 
-        assert(obj.HasMember("Name"));
-        std::string name = obj["Name"].GetString();
+    //formats.push_back(VK_FORMAT_D32_SFLOAT_S8_UINT); // Determine
 
-        assert(obj.HasMember("Type"));
-        std::string type = obj["Type"].GetString();
+    renderingInfos.resize(swapchain.imageCount);
 
-        std::string subtype = "";
-        if (obj.HasMember("Subtype")) {
-            subtype = obj["Subtype"].GetString();
-        }
+    renderingInfos[0].sType = VK_STRUCTURE_TYPE_RENDERING_INFO_KHR;
+    renderingInfos[0].pNext = nullptr;
+    renderingInfos[0].flags = 0;
+    renderingInfos[0].renderArea.offset = { 0, 0 };
+    renderingInfos[0].renderArea.extent = { width, height };
+    renderingInfos[0].layerCount = 1;
+    renderingInfos[0].viewMask = 0;
+    renderingInfos[0].colorAttachmentCount = 1;
+    renderingInfos[0].pColorAttachments = &attachments[0];
+    renderingInfos[0].pDepthAttachment = &attachments[2];
+    renderingInfos[0].pStencilAttachment = &attachments[2];
 
-        assert(obj.HasMember("Filename"));
-        std::string filename = obj["Filename"].GetString();
-
-        res::Resource& res = createResource(name, filename, type, subtype);
-
-        //TODO: Stop prioritizing shaders like this, pipelines need to be fixed first
-        //if (type == "shader") {
-        //    LoadFunction loadFunction = loadFunctionRegistry.at(res.type);
-        //    loadFunction(*this, res);
-        //}
-        //else {
-            requestResourceLoad(res.id);
-        //}
-    }
-}
-
-void ResourceSystem::loadReflections(const rapidjson::GenericArray<false, rapidjson::Value>& reflections) {
-    for (auto* ptr = reflections.Begin(); ptr != reflections.End(); ++ptr) {
-        loadReflection(ptr->GetObject());
-    }
-}
-
-void ResourceSystem::loadReflection(const rapidjson::GenericObject<false, rapidjson::Value>& reflection) {
-    assert(reflection.HasMember("Name"));
-    std::string name = reflection["Name"].GetString();
-
-    if (reflections.find(name) != reflections.end()) return; // If it is already loaded, don't
-
-    VkShaderStageFlagBits stage;
-    assert(reflection.HasMember("Type"));
-    std::string type = reflection["Type"].GetString();
-    if (type == "vert") stage = VK_SHADER_STAGE_VERTEX_BIT;
-    else if (type == "frag") stage = VK_SHADER_STAGE_FRAGMENT_BIT;
-
-    reflections[name].init(reflection, stage);
-}
-
-void ResourceSystem::loadObject(const rapidjson::GenericObject<false, rapidjson::Value>& object) {
-    //TODO: Check if it's already loaded
-
-    objects.push_back({});
-    GameObject& o = objects.back();
-    root.addChild(o);
-
-    assert(object.HasMember("Name"));
-    o.name = object["Name"].GetString();
-
-    // Setup Position
-    if (object.HasMember("Position")) {
-        auto& arr = object["Position"].GetArray();
-        o.position = glm::vec3(arr[0].GetFloat(), arr[1].GetFloat(), arr[2].GetFloat());
-    }
-    
-    // Setup Rotation from gradian euler angles
-    if (object.HasMember("Rotation")) {
-        auto& arr = object["Rotation"].GetArray();
-        o.rotation = glm::quat(glm::vec3(arr[0].GetFloat(), arr[1].GetFloat(), arr[2].GetFloat()));
-    }
-
-    // Setup Scale
-    if (object.HasMember("Scale")) {
-        auto& arr = object["Scale"].GetArray();
-        o.scale = glm::vec3(arr[0].GetFloat(), arr[1].GetFloat(), arr[2].GetFloat());
-    }
-
-    o.calculateTransform();
-
-    // Setup Model
-    if (object.HasMember("Model")) {
-        renderables.push_back({});
-        Renderable& r = renderables.back();
-        r.mvpHandle = getStorageBufferIndex(transformBuffer);
-        r.parent = &o;
-        std::string meshName = object["Model"].GetString();
-        edl::res::ResourceID meshID = edl::hashString(meshName);
-        r.model = meshID;
-
-        o.component = &r;
-    }
-}
-
-void ResourceSystem::loadModel(const rapidjson::GenericObject<false, rapidjson::Value>& object) {
-    assert(object.HasMember("Name"));
-    assert(object.HasMember("Mesh"));
-    assert(object.HasMember("Material"));
-
-    std::string name = object["Name"].GetString();
-    std::string mesh = object["Mesh"].GetString();
-    std::string material = object["Material"].GetString();
-
-    res::Resource& res = createResource(name, "", "model", "");
-    edl::res::allocateResourceData(res, sizeof(Model), *allocator);
-    Model& model = edl::res::getResourceData<Model>(res);
-
-    model.mesh = edl::hashString(mesh);
-    model.material = edl::hashString(material);
-
-
-    res.status = edl::res::ResourceStatus::LOADED;
-}
-
-void ResourceSystem::loadMaterial(const rapidjson::GenericObject<false, rapidjson::Value>& object) {
-    assert(object.HasMember("Name"));
-    assert(object.HasMember("Tint"));
-    assert(object.HasMember("Metallic"));
-    assert(object.HasMember("Roughness"));
-    assert(object.HasMember("AO"));
-    assert(object.HasMember("AlbedoTexture"));
-    assert(object.HasMember("NormalTexture"));
-
-    std::string name = object["Name"].GetString();
-
-    res::Resource& res = createResource(name, "", "material", "");
-    edl::res::allocateResourceData(res, sizeof(PBRMaterial), *allocator);
-    PBRMaterial& material = edl::res::getResourceData<PBRMaterial>(res);
-
-    auto& tintarr = object["Tint"].GetArray();
-    material.tint.r = tintarr[0].GetFloat();
-    material.tint.g = tintarr[1].GetFloat();
-    material.tint.b = tintarr[2].GetFloat();
-    material.tint.a = tintarr[3].GetFloat();
-
-
-    material.metallic = object["Metallic"].GetFloat();
-    material.roughness = object["Roughness"].GetFloat();
-    material.ao = object["AO"].GetFloat();
-
-    std::string albedo = object["AlbedoTexture"].GetString();
-    std::string normal = object["NormalTexture"].GetString();
-
-    material.albedoTexture = edl::hashString(albedo);
-    material.normalTexture = edl::hashString(normal);
-
-    if (albedo == "") material.albedoTexture = 0;
-    if (normal == "") material.normalTexture = 0;
-
-    material.materialIndex = edl::getStorageBufferIndex(materialBuffer, 1);
-
-    res.status = edl::res::ResourceStatus::LOADED;
+    renderingInfos[1].sType = VK_STRUCTURE_TYPE_RENDERING_INFO_KHR;
+    renderingInfos[1].pNext = nullptr;
+    renderingInfos[1].flags = 0;
+    renderingInfos[1].renderArea.offset = { 0, 0 };
+    renderingInfos[1].renderArea.extent = { width, height };
+    renderingInfos[1].layerCount = 1;
+    renderingInfos[1].viewMask = 0;
+    renderingInfos[1].colorAttachmentCount = 1;
+    renderingInfos[1].pColorAttachments = &attachments[1];
+    renderingInfos[1].pDepthAttachment = &attachments[3];
+    renderingInfos[1].pStencilAttachment = &attachments[3];
 }
 
 void ResourceSystem::draw(VkCommandBuffer& cb, uint32_t imageIndex) {
     std::string currentPipeline = "";
     
+    VkRect2D scissor = {};
+    scissor.offset.x = 0;
+    scissor.offset.y = 0;
+    scissor.extent.width = width;
+    scissor.extent.height = height;
+
     VkViewport viewport = {};
     viewport.x = 0.0f;
     viewport.y = 0.0f;
-    viewport.width = (float)globalInfo->width;
-    viewport.height = (float)globalInfo->height;
+    viewport.width = (float)width;
+    viewport.height = (float)height;
     viewport.minDepth = 0.0f;
-    viewport.maxDepth = 1.0f;
+    viewport.maxDepth = 10.0f;
 
     if (renderables.size() == 0) return;
 
     Pipeline& pipeline = pipelines["Shader3D"];
-    VkRenderingInfoKHR& renderingInfo = pipeline.renderingInfos[imageIndex];
+    VkRenderingInfo& renderingInfo = renderingInfos[imageIndex];
+    vkCmdBeginRendering(cb, &renderingInfo);
 
-    PFN_vkCmdBeginRenderingKHR bRender = reinterpret_cast<PFN_vkCmdBeginRenderingKHR>(vkGetDeviceProcAddr(instance.device, "vkCmdBeginRenderingKHR"));
-    bRender(cb, &renderingInfo);
+    pipeline.bind(cb);
 
-    //edl::vk::vkCmdBeginRenderingKHR(cb, &pipeline.renderingInfos[imageIndex]);
-    vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.pipeline);
-
+    // Set Dynamic State
     vkCmdSetViewport(cb, 0, 1, &viewport);
+    vkCmdSetScissor(cb, 0, 1, &scissor);
+    vkCmdSetCullMode(cb, VK_CULL_MODE_BACK_BIT);
+    vkCmdSetFrontFace(cb, VK_FRONT_FACE_COUNTER_CLOCKWISE);
 
-    uint32_t o[8] = { 0, 0, 0, 0, 0, 0, 0, 0 };
-    VkDescriptorSet sets[9] = { 
-        sceneDataBuffer.descriptorSet,
-        drawDataBuffer.descriptorSet,
-        transformBuffer.descriptorSet,
-        positionBuffer.descriptorSet,
-        normalBuffer.descriptorSet,
-        texCoord0Buffer.descriptorSet,
-        materialBuffer.descriptorSet,
-        lightBuffer.descriptorSet,
-        bindlessImageDescriptor.descriptorSet };
-    vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.pipelineLayout, 0, 9, sets, 8, o);
-    //
-    ////TODO: Bind them all at the same time
-    //vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelines[models[0].pipeline].pipelineLayout, 0, 1, &drawDataBuffer.descriptorSet, 1, &o);
-    //vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelines[models[0].pipeline].pipelineLayout, 1, 1, &transformBuffer.descriptorSet, 1, &o);
-    //vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelines[models[0].pipeline].pipelineLayout, 2, 1, &positionBuffer.descriptorSet, 1, &o);
-    //vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelines[models[0].pipeline].pipelineLayout, 3, 1, &normalBuffer.descriptorSet, 1, &o);
-    //vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelines[models[0].pipeline].pipelineLayout, 4, 1, &texCoord0Buffer.descriptorSet, 1, &o);
-    //vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelines[models[0].pipeline].pipelineLayout, 5, 1, &texCoord1Buffer.descriptorSet, 1, &o);
+    
+    // Bind textures array
+    vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &bindlessImageDescriptor.descriptorSet, 0, nullptr);
 
-    //vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelines[models[0].pipeline].pipelineLayout, 6, 1, &bindlessImageDescriptor.descriptorSet, 0, nullptr);
+    // TODO: Get rid of this
+    //vkCmdBindIndexBuffer(cb, indexBuffer.buffer, 0, VK_INDEX_TYPE_UINT16);
 
-    vkCmdBindIndexBuffer(cb, indexBuffer.buffer, 0, VK_INDEX_TYPE_UINT16);
+    // Push buffer addresses
+    vkCmdPushConstants(cb, pipelineLayout, VK_SHADER_STAGE_ALL, 0, 8, &sceneDataBuffer.address);
+    vkCmdPushConstants(cb, pipelineLayout, VK_SHADER_STAGE_ALL, 8, 8, &drawDataBuffer.address);
+    vkCmdPushConstants(cb, pipelineLayout, VK_SHADER_STAGE_ALL, 16, 8, &lightBuffer.address);
 
     uint32_t drawID = 0;
-
-    glm::vec3 campos = camera.getPos();
-
-    SceneData scene = {};
-    scene.activeLights = 0;
-    scene.cameraPosition = glm::vec4(campos, 1.0f);
-
-    edl::updateStorageBuffer(stagingBuffer, sceneDataBuffer, 0, &scene, 1);
 
     //TODO: Update lights
 
     for (int i = 0; i < renderables.size(); ++i) {
 
-        // Update the transform
-        //edl::updateStorageBuffer(stagingBuffer, transformBuffer, renderables[i].mvpHandle, &renderables[i].parent->transform, 1);
+        if (renderables[i].parent == nullptr || !renderables[i].parent->getEnabled()) continue;
 
-        //TODO: EVERYTHING NEEDS TO BE FIXED
-        //models[i].draw(cb, pipelines[models[i].pipeline].pipelineLayout);
-        //drawMesh(cb, pipelines[models[i].pipeline].pipelineLayout, models[i].mesh);
-
-        res::Resource& res = resMap.at(renderables[i].model);
-        Model& model = res::getResourceData<Model>(res);
+        Resource& res = resMap.at(renderables[i].model);
+        Model& model = edl::getResourceData<Model>(res);
 
         if (resMap.find(model.mesh) == resMap.end()) {
             std::cout << "Mesh not found for model: " << res.name << std::endl;
@@ -418,8 +238,8 @@ void ResourceSystem::draw(VkCommandBuffer& cb, uint32_t imageIndex) {
             continue;
         }
 
-        Mesh& mesh = res::getResourceData<Mesh>(resMap.at(model.mesh));
-        PBRMaterial& material = res::getResourceData<PBRMaterial>(resMap.at(model.material));
+        Mesh& mesh = edl::getResourceData<Mesh>(resMap.at(model.mesh));
+        PBRMaterial& material = edl::getResourceData<PBRMaterial>(resMap.at(model.material));
 
         Material mat;// = material;
         mat.tint = material.tint;
@@ -428,8 +248,8 @@ void ResourceSystem::draw(VkCommandBuffer& cb, uint32_t imageIndex) {
         mat.ao = material.ao;
 
         if (material.albedoTexture > 0) {
-            res::Resource& ires = resMap.at(material.albedoTexture);
-            res::Image& image = res::getResourceData<res::Image>(ires);
+            Resource& ires = resMap.at(material.albedoTexture);
+            res::Image& image = edl::getResourceData<res::Image>(ires);
 
             mat.albedoTexture = image.materialIndex;
         }
@@ -438,8 +258,8 @@ void ResourceSystem::draw(VkCommandBuffer& cb, uint32_t imageIndex) {
         }
 
         if (material.normalTexture > 0) {
-            res::Resource& ires = resMap.at(material.normalTexture);
-            res::Image& image = res::getResourceData<res::Image>(ires);
+            Resource& ires = resMap.at(material.normalTexture);
+            res::Image& image = edl::getResourceData<res::Image>(ires);
 
             mat.normalTexture = image.materialIndex;
         }
@@ -447,54 +267,48 @@ void ResourceSystem::draw(VkCommandBuffer& cb, uint32_t imageIndex) {
             mat.normalTexture = -1;
         }
 
-        DrawData drawData = {};
-        drawData.positionOffset = mesh.positionOffset;
-        drawData.normalOffset = mesh.normalOffset;
-        drawData.tangentOffset = mesh.tangentOffset;
-        drawData.texCoord0Offset = mesh.texCoord0Offset;
-        drawData.materialOffset = model.material;
-        drawData.mvpOffset = renderables[i].mvpHandle;
-
-        drawData.materialOffset = material.materialIndex;
-        edl::updateStorageBuffer(stagingBuffer, drawDataBuffer, drawID, &drawData, 1);
-
         edl::updateStorageBuffer(stagingBuffer, materialBuffer, material.materialIndex, &mat, 1);
 
-        VkDrawIndexedIndirectCommand indirect = {};
-        indirect.instanceCount = 1;
-        indirect.vertexOffset = 0;
-        indirect.firstIndex = mesh.indexOffset;
-        indirect.indexCount = mesh.indexCount;
-        indirect.firstInstance = 0;
-        edl::updateStorageBuffer(stagingBuffer, indirectBuffer, drawID, &indirect, 1);
+        MaterialSet set = {};
+        set.materials[0] = edl::getStorageBufferAddress(materialBuffer, material.materialIndex);
 
-        drawID++;
+        edl::updateStorageBuffer(stagingBuffer, materialSetBuffer, 0, &set, 1);
+
+        for (uint32_t j = 0; j < mesh.indexCount; j++) {
+            DrawCommand drawCommand = {};
+            drawCommand.mesh = mesh.positionOffset;
+            drawCommand.meshlet = j;
+            drawCommand.materials = edl::getStorageBufferAddress(materialSetBuffer, 0);
+            drawCommand.mvp = edl::getStorageBufferAddress(transformBuffer, renderables[i].mvpHandle);
+
+            edl::updateStorageBuffer(stagingBuffer, drawDataBuffer, drawID, &drawCommand, 1);
+
+            drawID++;
+        }
     }
+    
+    PFN_vkCmdDrawMeshTasksNV vkCmdDrawMeshTasksNV = (PFN_vkCmdDrawMeshTasksNV)vkGetInstanceProcAddr(instance.instance, "vkCmdDrawMeshTasksNV");
+    vkCmdDrawMeshTasksNV(cb, drawID, 0);
 
-    vkCmdDrawIndexedIndirect(cb, indirectBuffer.buffer, 0, drawID, sizeof(VkDrawIndexedIndirectCommand));
-
-    //vkCmdEndRenderingKHR(cb);
-    edl::vk::vkCmdEndRenderingKHR(cb);
+    vkCmdEndRendering(cb);
 }
 
 void ResourceSystem::registerLoadFunction(const std::string& type, LoadFunction function) {
-    res::ResourceType restype = hashString(type);
-
-    if (loadFunctionRegistry.find(restype) != loadFunctionRegistry.end()) {
+    if (loadFunctionRegistry.find(type) != loadFunctionRegistry.end()) {
         std::cout << "Loader already registered for type: " << type << std::endl;
     }
 
-    loadFunctionRegistry.insert({ restype, function });
+    loadFunctionRegistry.insert({ type, function });
 }
 
 void ResourceSystem::update(float delta) {
     //fileLoader.loadChunks(100);
     while (queuebot != queuetop) {
-        res::ResourceID id = loadQueue[queuebot];
+        ResourceID id = loadQueue[queuebot];
 
-        res::Resource& res = resMap.at(id);
+        Resource& res = resMap.at(id);
         //TODO: Check requirements loaded
-        if (res.status == res::ResourceStatus::UNLOADED) {
+        if (res.status == ResourceStatus::UNLOADED) {
             LoadFunction loadFunction = loadFunctionRegistry.at(res.type);
 
             loadFunction(toolchain, res);
@@ -505,50 +319,55 @@ void ResourceSystem::update(float delta) {
         if (queuebot == MAX_QUEUE) queuebot = 0;
     }
 
-    root.update(toolchain, delta);
+    //TODO: Lol, this is a hack and a half
+    //if (glfwGetKey(camera.window, GLFW_KEY_F5) == GLFW_PRESS) {
+    //    refreshScene("scene.json");
+    //}
+
+    glm::vec3 campos = camera.getPos();
+    SceneData scene = {};
+    scene.activeLights = 0;
+    scene.cameraPosition = glm::vec4(campos, 1.0f);
+    scene.directionalLightPower = dirLight.directionalLightPower;
+    scene.lightDir = dirLight.lightDir;
+    scene.lightColor = dirLight.lightColor;
+
+    edl::updateStorageBuffer(stagingBuffer, sceneDataBuffer, 0, &scene, 1);
     //fileLoader.cleanup();
+
+    objectRegistry.update(toolchain, delta);
 }
 
 //Maybe multiple create functions, one for named resources, unnamed resources, and filenamed resources
-res::Resource& ResourceSystem::createResource(std::string name, std::string filename, std::string type, std::string subtype) {
-    uint64_t nameHash = hashString(name);
-    uint64_t filenameHash = hashString(filename);
+Resource& ResourceSystem::createResource(const std::string& name, const std::string& filename, const std::string& type, const std::string& subtype) {
+    uint64_t nameHash = hash(name);
+    uint64_t filenameHash = hash(filename);
 
-    res::ResourceID id = nameHash;//filenameHash == 0 ? nameHash : filenameHash;
+    ResourceID id = nameHash;//filenameHash == 0 ? nameHash : filenameHash;
     if (resMap.find(id) != resMap.end()) { //TODO: IDing needs to be fixed, need support for multiple resources loaded from the same file
         //printf("Resource already has name: %s\n", name.c_str());
         return resMap.at(id);
     }
 
-    res::Resource& res = resMap[id];
+    Resource& res = resMap[id];
     res.id = id;
 
-    res.status = res::ResourceStatus::UNLOADED;
+    res.status = ResourceStatus::UNLOADED;
 
-    res.nameHash = nameHash;
     res.name = (char*)allocator->malloc(name.size());
-    strcpy(res.name, name.c_str());
+    //strcpy(res.name, name.c_str());
+    res.name = name;
 
     if (filename != "") {
-        const char* dir = findDirectory(filename.c_str());
-        size_t dirSize = strlen(dir);
-        size_t filenameSize = filename.size();
-
-        res.filenameHash = hashString(filename);
-        res.path = (char*)allocator->malloc(dirSize + filenameSize);
-        strcpy(res.path, dir);
-        strcpy(res.path + dirSize, filename.c_str());
+        const std::string& dir = findDirectory(filename);
+        res.path = dir + filename;
     }
     else {
-        res.filenameHash = 0;
-        res.path = 0;
+        res.path = "";
     }
 
-    res.type = hashString(type);
-    res.subtype = hashString(subtype);
-
-    res.dependenciesCount = 0;
-    res.dependencies = 0;
+    res.type = type;
+    res.subtype = subtype;
 
     res.size = 0;
     res.data = 0;
@@ -556,23 +375,30 @@ res::Resource& ResourceSystem::createResource(std::string name, std::string file
     return res;
 }
 
-res::Resource& ResourceSystem::getResource(res::ResourceID id) {
+Resource& ResourceSystem::getResource(ResourceID id) {
     return resMap.at(id);
 }
 
-const char* ResourceSystem::findDirectory(const char* filename) {
+void ResourceSystem::rebuildPipelines() {
+    for (auto& p : pipelines) {
+        p.second.rebuild(toolchain);
+    }
+}
 
+const std::string& ResourceSystem::findDirectory(const std::string& filename) {
     uint32_t size = directories.size();
     for (uint32_t i = 0; i < size; i++) {
         if (std::filesystem::exists(directories[i] + filename)) {
-            return directories[i].c_str();
+            return directories[i];
         }
     }
 
+    std::cout << "Directory not found: " << filename << std::endl;
     assert(false, "Directory not found!");
+    return 0;
 }
 
-void ResourceSystem::requestResourceLoad(res::ResourceID id) {
+void ResourceSystem::requestResourceLoad(ResourceID id) {
     assert(queuetop != queuebot - 1 || (queuetop == MAX_QUEUE - 1 && queuebot == 0), "Queue overflow");
     loadQueue[queuetop] = id;
     queuetop++;

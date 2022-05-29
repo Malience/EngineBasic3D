@@ -13,7 +13,14 @@ layout(location = 7) out mat3 TBN;
 
 struct SceneData {
 	vec4 cameraPosition;
+	
+	vec4 lightDir;
+	vec4 lightColor;
+	
+	float directionalLightPower;
 	uint activeLights;
+	int pad0;
+	int pad1;
 };
 
 struct DrawData {

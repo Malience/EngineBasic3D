@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.20)
+cmake_minimum_required(VERSION 3.21)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -6,10 +6,6 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 project(EngineBasic3D C CXX)
 
 find_package(Vulkan REQUIRED FATAL_ERROR)
-find_package(glm REQUIRED FATAL_ERROR)
-find_package(stb REQUIRED FATAL_ERROR)
-find_package(GLFW3 REQUIRED FATAL_ERROR)
-find_package(assimp REQUIRED FATAL_ERROR)
 
 ## ShaderC
 find_path(shaderc_INCLUDE_DIR

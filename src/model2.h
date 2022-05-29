@@ -40,7 +40,7 @@ public:
     glm::mat4 mvp;
 
     uint32_t transformHandle;
-    res::ResourceID mesh;
+    ResourceID mesh;
     //DescriptorHandle uniforms_descriptor_handle;
 };
 

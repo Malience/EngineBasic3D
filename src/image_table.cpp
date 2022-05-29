@@ -1,7 +1,9 @@
 #include "image_table.h"
 
 #include "Util.h"
+
 #include "edl/io.h"
+#include "edl/util.h"
 
 namespace edl {
 

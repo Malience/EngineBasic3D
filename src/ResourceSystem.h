@@ -1,9 +1,8 @@
 #pragma once
 
 #include "edl/vk/vulkan.h"
-#include "NewShader.h"
-#include "ShaderReflection.h"
-#include "GlobalInfo.h"
+#include "edl/shader.h"
+#include "edl/resource.h"
 #include "descriptor_manager.h"
 #include "StagingBuffer.h"
 #include "UniformBufferObject.h"
@@ -16,6 +15,8 @@
 #include "camera.h"
 #include "GameObject.h"
 #include "Renderable.h"
+#include "bindless_types.h"
+#include "pipeline.h"
 
 #include "vulkan/vulkan.h"
 
@@ -36,25 +37,8 @@ public:
     VkShaderStageFlagBits stage;
 };
 
-class FileRecord {
-public:
-    std::string name;
-    std::string type; //Enum?
-    std::string subtype; //Enum?
-    std::string filename; //This should probably be saved as a full path
-};
-
-class Pipeline;
 class ResourceSystem;
-
-typedef void (*LoadFunction)(edl::res::Toolchain& toolchain, edl::res::Resource& res);
-
-class ResourceLoader {
-public:
-    ResourceLoader() {}
-
-    virtual void loadResource(ResourceSystem& system, const FileRecord& record) {};
-};
+class Pipeline;
 
 // Goal 1: Converge DescriptorManager, StagingBuffer, ImageTable, and UniformBufferObject
 // COMPLETE: Goal 2: Loading the individual segments (renderpass, shader, etc.) should load from the json or from another file
@@ -65,51 +49,42 @@ public:
     ~ResourceSystem();
 
     //TODO: const-correctness, need to fix in Instance
-    void init(vk::Instance& instance, global_info* globalInfo);
-
-    void loadScene(const std::string& filename);
-
-    void loadFiles(const rapidjson::GenericArray<false, rapidjson::Value>& files);
-
-    void loadReflections(const rapidjson::GenericArray<false, rapidjson::Value>& reflections);
-    void loadReflection(const rapidjson::GenericObject<false, rapidjson::Value>& reflection);
-
-    void loadObject(const rapidjson::GenericObject<false, rapidjson::Value>& object);
-    void loadModel(const rapidjson::GenericObject<false, rapidjson::Value>& object);
-    void loadMaterial(const rapidjson::GenericObject<false, rapidjson::Value>& object);
+    void init();
 
     void draw(VkCommandBuffer& cb, uint32_t imageIndex);
 
     void registerLoadFunction(const std::string& type, LoadFunction function);
 
-    res::Resource& createResource(std::string name, std::string filename, std::string type, std::string subtype);
+    Resource& createResource(const std::string& name, const std::string& filename, const std::string& type, const std::string& subtype);
     
-    res::Resource& getResource(res::ResourceID id);
-    inline bool resourceExists(res::ResourceID id) {
+    Resource& getResource(ResourceID id);
+    inline bool resourceExists(ResourceID id) {
         return resMap.find(id) != resMap.end();
     }
-    inline bool resourceLoaded(res::ResourceID id) {
-        return resMap.find(id) != resMap.end() && resMap.at(id).status == res::ResourceStatus::LOADED;
+    inline bool resourceLoaded(ResourceID id) {
+        return resMap.find(id) != resMap.end() && resMap.at(id).status == ResourceStatus::LOADED;
     }
 
-    const char* findDirectory(const char* filename);
+    void rebuildPipelines();
 
-    void requestResourceLoad(res::ResourceID id);
+    const std::string& ResourceSystem::findDirectory(const std::string& filename);
+
+    void requestResourceLoad(ResourceID id);
 
     void update(float delta);
 
-    void drawMesh(VkCommandBuffer cb, VkPipelineLayout layout, res::ResourceID id);
-
-    global_info* globalInfo;
+    void buildRenderInfo();
 
     //TODO: Switch to proper tables
     std::unordered_map<std::string, ShaderHandle> shader_handles;
-    std::unordered_map<std::string, ShaderReflection> reflections;
 
-    std::unordered_map<std::string, Pipeline> pipelines;
+    std::unordered_map<std::string, edl::Pipeline> pipelines;
     std::unordered_map<std::string, ImageHandle> images;
 
     std::unordered_map<uint32_t, DescriptorSetLayout> layouts;
+
+    //TODO: PLEASE!!!
+    VkPipelineLayout pipelineLayout;
 
     //TODO: Merge
     ImageTable imageTable;
@@ -125,46 +100,53 @@ public:
     vk::Instance instance;
     VkPhysicalDevice vulkan_physical_device;
     VkDevice vulkan_device;
+    vk::Swapchain swapchain;
 
-    ShaderCompiler shader_compiler;
+    std::vector<VkImageView> imageviews;
+    std::vector<VkRenderingAttachmentInfoKHR> attachments;
+    std::vector<VkRenderingInfo> renderingInfos;
 
     std::vector<DescriptorHandle> imageHandles;
 
-    mem::Allocator* allocator;
+    DepthHandle depthHandle[2];
 
-    std::unordered_map<res::ResourceID, res::Resource> resMap;
+    Allocator* allocator;
 
-    std::unordered_map<res::ResourceType, LoadFunction> loadFunctionRegistry;
+    std::unordered_map<ResourceID, Resource> resMap;
+
+    std::unordered_map<std::string, LoadFunction> loadFunctionRegistry;
 
     static const uint32_t MAX_QUEUE = 64 * 1024;
     uint32_t queuebot = 0;
     uint32_t queuetop = 0;
-    res::ResourceID loadQueue[MAX_QUEUE];
+    ResourceID loadQueue[MAX_QUEUE];
 
     BindlessImageDescriptor bindlessImageDescriptor;
     StorageBuffer transformBuffer;
     StorageBuffer materialBuffer;
+    StorageBuffer materialSetBuffer;
     StorageBuffer drawDataBuffer;
 
     StorageBuffer sceneDataBuffer;
     StorageBuffer lightBuffer;
 
-    StorageBuffer positionBuffer;
-    StorageBuffer normalBuffer;
-    StorageBuffer texCoord0Buffer;
+    StorageBuffer geometryBuffer;
 
     StorageBuffer indexBuffer;
     StorageBuffer indirectBuffer;
 
     std::unordered_map<std::string, int32_t> textureMap;
 
-    res::Toolchain toolchain;
+    Toolchain toolchain;
 
     Camera camera;
     glm::mat4 proj;
-    GameObject root;
-    std::vector<GameObject> objects;
+    DirLight dirLight;
+
+    ObjectRegistry objectRegistry;
     std::vector<Renderable> renderables;
+
+    uint32_t width, height;
 
 private:
     

@@ -4,6 +4,6 @@
 
 namespace edl {
 
-void loadMesh(res::Toolchain& toolchain, res::Resource& res);
+void loadOBJ(Toolchain& toolchain, Resource& res);
 
 }

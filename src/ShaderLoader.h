@@ -4,6 +4,6 @@
 
 namespace edl {
 
-void loadShader(res::Toolchain& toolchain, res::Resource& res);
+void loadShader(Toolchain& toolchain, Resource& res);
 
 }

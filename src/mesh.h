@@ -1,49 +1,47 @@
 #pragma once
 
-#include "vulkan/vulkan.h"
+#include <stdint.h>
 
-#include <unordered_map>
-#include <vector>
+const uint32_t MESHLET_MAX_VERTICES = 64;
+const uint32_t MESHLET_MAX_TRIANGLES = 126;
 
-namespace edl {
-
-class Pipeline;
-class ShaderReflection;
-
-struct Attribute {
-    VkDeviceSize offset;
-    size_t nameHash;
+#pragma pack(push, 1)
+struct MeshHeader {
+    uint32_t meshletCount;
+    uint32_t padding0;
+    uint64_t meshletsAddress;
 };
 
-//struct Descriptor { //TEMP: Needs to be set up in a way so that they get
-//
-//};
+struct MeshletHeader {
+    uint32_t vertCount;
+    uint32_t triCount;
 
-struct SubMesh {
-    uint32_t indexStart;
-    uint32_t indexCount;
-    VkDescriptorSet set;
+    uint64_t positionsAddress;
+    uint64_t normalsAddress;
+    uint64_t tangentsAddress;
+    uint64_t texcoordsAddress;
+
+    uint64_t indicesAddress;
+    uint64_t materialsAddress;
+
+    uint64_t padding0;
+};
+
+struct MeshletData {
+    // Per-Vertex
+    std::vector<glm::vec4> positions;
+    std::vector<glm::vec4> normals;
+    std::vector<glm::vec4> tangents;
+    std::vector<glm::vec2> texcoords;
+
+    // Per-Face
+    std::vector<uint32_t> indices; // TODO: I hate that this isn't ushort
+    std::vector<uint32_t> materials; // This too
 };
 
 struct Mesh2 {
-    VkBuffer buffer;
-    
-    uint32_t indexCount;
-    VkDeviceSize indexOffset;
-
-    uint32_t attributeCount;
-    Attribute* attributes;
-
-    uint32_t submeshCount;
-    SubMesh* submeshes;
+    MeshHeader header;
+    std::vector<MeshletHeader> meshlets;
+    std::vector<MeshletData> data;
 };
-
-// Returns the number of bytes allocated
-size_t callocMesh(void* memory, uint32_t attributeCount, uint32_t submeshCount);
-
-void drawMesh(VkCommandBuffer cb, ShaderReflection& reflection, VkPipelineLayout layout, const Mesh2& mesh);
-
-
-
-
-}
+#pragma pack(pop)

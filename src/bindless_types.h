@@ -5,25 +5,44 @@
 #include <cstdint>
 
 struct DrawData {
-	int positionOffset;
-	int normalOffset;
-	int tangentOffset;
+	uint64_t positionOffset;
+	uint64_t normalOffset;
+	uint64_t tangentOffset;
 	//int bitangentOffset;
 
-	int texCoord0Offset;
+	uint64_t texCoord0Offset;
 	//int texCoord1Offset;
-	int materialOffset;
+	uint64_t materialOffset;
 
-	int mvpOffset;
+	uint64_t mvpOffset;
 	//int invMVPOffset;
 
-	int padding0;
-	int padding1;
+	//int padding0;
+	//int padding1;
+};
+
+struct DrawCommand {
+	uint64_t mesh;
+	uint64_t meshlet;
+	uint64_t materials;
+	uint64_t mvp;
 };
 
 struct SceneData {
 	glm::vec4 cameraPosition;
+	glm::vec4 lightDir;
+	glm::vec4 lightColor;
+
+	float directionalLightPower;
 	uint32_t activeLights;
+	int pad0;
+	int pad1;
+};
+
+struct DirLight {
+	glm::vec4 lightDir;
+	glm::vec4 lightColor;
+	float directionalLightPower;
 };
 
 struct PBRMaterial {
