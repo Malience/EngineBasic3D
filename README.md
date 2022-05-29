@@ -35,6 +35,9 @@ In this implementation the depth buffer has been replaced with a distance buffer
 
 ## Required Dependencies
 * <a href="https://vulkan.lunarg.com/" target="_blank">`Vulkan SDK`</a>
+* <a href="https://cmake.org/download/" target="_blank">`CMAKE`</a>
+* <a href="https://cmake.org/download/" target="_blank">`CMAKE`</a>
+* Visual Studio 2022
 * Updated Graphics Drivers
 
 ## Included Dependencies

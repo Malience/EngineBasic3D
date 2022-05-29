@@ -20,3 +20,5 @@ target_link_libraries(EngineBasic3D PRIVATE glm::glm)
 if(WIN32)
   target_link_libraries(EngineBasic3D PRIVATE wsock32 ws2_32)
 endif()
+
+set_property(TARGET EngineBasic3D PROPERTY VS_DEBUGGER_WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}")
