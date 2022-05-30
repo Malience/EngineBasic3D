@@ -98,8 +98,11 @@ glm::mat4 persp(float fovy, float aspect, float near, float far) {
 }
 
 void init(std::string applicationName) {
+	std::vector<const char*> layers;
+
 #ifdef _DEBUG
 	edl::log::setLevel(edl::log::Level::trace);
+	layers.push_back("VK_LAYER_KHRONOS_validation");
 #else
 	edl::log::setLevel(edl::log::Level::trace);
 #endif
@@ -110,8 +113,7 @@ void init(std::string applicationName) {
 	uint32_t glfwExtensionCount = 0;
 	const char** glfwExtensions = edl::GLFW::getRequiredExtensions(&glfwExtensionCount);
 
-	std::vector<const char*> layers;
-	layers.push_back("VK_LAYER_KHRONOS_validation");
+	
 
 	std::vector<const char*> extensions;
 	extensions.push_back(VK_KHR_SURFACE_EXTENSION_NAME);
