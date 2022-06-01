@@ -51,10 +51,19 @@ void ResourceSystem::init() {
 
     geometryBuffer = createStorageBuffer(instance, (size_t) 2 * 1024 * 1024 * 1024, 0);
 
-    indirectBuffer = createStorageBuffer(instance, sizeof(VkDrawMeshTasksIndirectCommandNV), objectMax, VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT);
-
     sceneDataBuffer = createStorageBuffer(instance, sizeof(SceneData), 1);
     lightBuffer = createStorageBuffer(instance, sizeof(Light), 10);
+
+    if (!instance.MESH_SHADING) {
+        indexBuffer = createStorageBuffer(instance, sizeof(uint16_t) * 20 * 3, VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+        std::vector<uint16_t> indices(20 * 3);
+        for (uint16_t i = 0; i < (20 * 3); i++) {
+            indices[i] = i;
+        }
+        updateStorageBuffer(stagingBuffer, indexBuffer, 0, indices.data(), sizeof(uint16_t) * 20 * 3);
+
+        indirectBuffer = createStorageBuffer(instance, sizeof(VkDrawIndexedIndirectCommand), objectMax, VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT);
+    }
 
     std::vector<VkDescriptorSetLayout> setLayouts;
     setLayouts.push_back(bindlessImageDescriptor.descriptorSetLayout);
@@ -193,7 +202,7 @@ void ResourceSystem::draw(VkCommandBuffer& cb, uint32_t imageIndex) {
 
     if (renderables.size() == 0) return;
 
-    Pipeline& pipeline = pipelines["Shader3D"];
+    Pipeline& pipeline = instance.MESH_SHADING ? pipelines["Shader3D"] : pipelines["Shader3DVertex"];
     VkRenderingInfo& renderingInfo = renderingInfos[imageIndex];
     vkCmdBeginRendering(cb, &renderingInfo);
 
@@ -283,12 +292,30 @@ void ResourceSystem::draw(VkCommandBuffer& cb, uint32_t imageIndex) {
 
             edl::updateStorageBuffer(stagingBuffer, drawDataBuffer, drawID, &drawCommand, 1);
 
+            if (!instance.MESH_SHADING) {
+                VkDrawIndexedIndirectCommand indirect = {};
+                indirect.firstIndex = 0;
+                indirect.firstInstance = 0;
+                indirect.instanceCount = 1;
+                indirect.indexCount = (j == mesh.indexCount - 1 ? mesh.indexOffset % 20 : 20) * 3;
+                indirect.vertexOffset = 0;
+
+                edl::updateStorageBuffer(stagingBuffer, indirectBuffer, drawID, &indirect, 1);
+            }
+
             drawID++;
         }
     }
     
-    PFN_vkCmdDrawMeshTasksNV vkCmdDrawMeshTasksNV = (PFN_vkCmdDrawMeshTasksNV)vkGetInstanceProcAddr(instance.instance, "vkCmdDrawMeshTasksNV");
-    vkCmdDrawMeshTasksNV(cb, drawID, 0);
+    if (instance.MESH_SHADING) {
+        PFN_vkCmdDrawMeshTasksNV vkCmdDrawMeshTasksNV = (PFN_vkCmdDrawMeshTasksNV)vkGetInstanceProcAddr(instance.instance, "vkCmdDrawMeshTasksNV");
+        vkCmdDrawMeshTasksNV(cb, drawID, 0);
+    }
+    else {
+        vkCmdBindIndexBuffer(cb, indexBuffer.buffer, 0, VkIndexType::VK_INDEX_TYPE_UINT16);
+        //vkCmdDrawIndexed(cb, 20, drawID, 0, 0, 0);
+        vkCmdDrawIndexedIndirect(cb, indirectBuffer.buffer, 0, drawID, sizeof(VkDrawIndexedIndirectCommand));
+    }
 
     vkCmdEndRendering(cb);
 }

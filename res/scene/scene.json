@@ -19,6 +19,12 @@
             "Filename": "shaders/shader3D.mesh"
         },
         {
+            "Name": "Shader3DVert",
+            "Type": "shader",
+            "Subtype": "vert",
+            "Filename": "shaders/shader3D.vert"
+        },
+        {
             "Name": "Shader3DFrag",
             "Type": "shader",
             "Subtype": "frag",
@@ -35,6 +41,17 @@
 		"DepthStencilFormat": "depth",
 		"Shaders": [
 			"Shader3DMesh",
+			"Shader3DFrag"
+		]
+	},
+	{
+		"Name": "Shader3DVertex",
+		"ColorFormats": [
+            "swapchain"
+		],
+		"DepthStencilFormat": "depth",
+		"Shaders": [
+			"Shader3DVert",
 			"Shader3DFrag"
 		]
 	}

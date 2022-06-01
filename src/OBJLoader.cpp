@@ -129,6 +129,7 @@ void loadOBJ(Toolchain& toolchain, Resource& res) {
 
     // TODO: HACK, THIS MUST BE ReMOVED
     meshres.indexCount = meshletCount;
+    meshres.indexOffset = total;
 
     for (uint32_t i = 0; i < meshletCount; i++) {
         uint32_t tricount = (i == meshletCount - 1) ? total % SIZEOF_MAX_TRIANGLES : SIZEOF_MAX_TRIANGLES;
